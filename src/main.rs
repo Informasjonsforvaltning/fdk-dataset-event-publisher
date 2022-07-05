@@ -2,7 +2,7 @@ use std::env;
 
 use chrono::DateTime;
 use error::Error;
-use kafka::create_sr_settings;
+use kafka::SR_SETTINGS;
 use lapin::{
     message::{Delivery, DeliveryResult},
     options::BasicAckOptions,
@@ -11,7 +11,6 @@ use lazy_static::lazy_static;
 use rabbit::HarvestReport;
 use rdkafka::producer::FutureProducer;
 use reqwest::StatusCode;
-use schema_registry_converter::async_impl::{avro::AvroEncoder, schema_registry::SrSettings};
 use schemas::setup_schemas;
 
 use crate::{kafka::send_event, schemas::DatasetEvent};
@@ -39,10 +38,6 @@ lazy_static! {
             );
             std::process::exit(1);
         });
-    pub static ref SR_SETTINGS: SrSettings = create_sr_settings().unwrap_or_else(|e| {
-        tracing::error!(error = e.to_string().as_str(), "SrSettings creation error");
-        std::process::exit(1);
-    });
 }
 
 #[tokio::main]
@@ -88,7 +83,7 @@ async fn main() {
             }
         };
 
-        match handle_message(&PRODUCER, &CLIENT, SR_SETTINGS.clone(), &delivery).await {
+        match handle_message(&PRODUCER, &CLIENT, &delivery).await {
             Ok(_) => tracing::info!("Successfully processed message"),
             Err(e) => tracing::error!(
                 error = e.to_string().as_str(),
@@ -110,11 +105,9 @@ async fn main() {
 async fn handle_message(
     producer: &FutureProducer,
     client: &reqwest::Client,
-    sr_settings: SrSettings,
     delivery: &Delivery,
 ) -> Result<(), Error> {
     let report: Vec<HarvestReport> = serde_json::from_slice(&delivery.data)?;
-    let mut encoder = AvroEncoder::new(sr_settings);
 
     for element in report {
         let timestamp =
@@ -130,7 +123,7 @@ async fn handle_message(
                     timestamp,
                 };
 
-                send_event(&mut encoder, &producer, message).await?;
+                send_event(&producer, message).await?;
             } else {
                 tracing::error!(
                     id = resource.fdk_id.as_str(),

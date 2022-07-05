@@ -4,7 +4,9 @@ use rdkafka::{
     ClientConfig,
 };
 use schema_registry_converter::{
-    async_impl::{avro::AvroEncoder, schema_registry::SrSettings},
+    async_impl::{
+        easy_avro::EasyAvroEncoder, 
+        schema_registry::SrSettings},
     schema_registry_common::SubjectNameStrategy,
 };
 use std::{env, time::Duration};
@@ -17,6 +19,26 @@ lazy_static! {
         env::var("SCHEMA_REGISTRY").unwrap_or("http://localhost:8081".to_string());
     pub static ref OUTPUT_TOPIC: String =
         env::var("OUTPUT_TOPIC").unwrap_or("dataset-events".to_string());
+    pub static ref SR_SETTINGS: SrSettings = {
+        let mut schema_registry_urls = SCHEMA_REGISTRY.split(",");
+        let mut sr_settings_builder =
+            SrSettings::new_builder(schema_registry_urls.next().unwrap().to_string());
+        schema_registry_urls.for_each(|url| {
+            sr_settings_builder.add_url(url.to_string());
+        });
+
+        let sr_settings = sr_settings_builder
+            .set_timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|e| {
+                tracing::error!(error = e.to_string().as_str(), "SrSettings creation error");
+                std::process::exit(1)
+            });
+
+        sr_settings
+    };
+    // Its much like AvroEncoder but includes a mutex
+    static ref AVRO_ENCODER: EasyAvroEncoder = EasyAvroEncoder::new(SR_SETTINGS.clone());
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -25,20 +47,6 @@ pub enum KafkaError {
     SRCError(#[from] schema_registry_converter::error::SRCError),
     #[error(transparent)]
     RdkafkaError(#[from] rdkafka::error::KafkaError),
-}
-
-pub fn create_sr_settings() -> Result<SrSettings, KafkaError> {
-    let mut schema_registry_urls = SCHEMA_REGISTRY.split(",");
-    let mut sr_settings_builder =
-        SrSettings::new_builder(schema_registry_urls.next().unwrap_or_default().to_string());
-    schema_registry_urls.for_each(|url| {
-        sr_settings_builder.add_url(url.to_string());
-    });
-    let sr_settings = sr_settings_builder
-        .set_timeout(Duration::from_secs(5))
-        .build()?;
-
-    Ok(sr_settings)
 }
 
 pub fn create_producer() -> Result<FutureProducer, KafkaError> {
@@ -50,12 +58,11 @@ pub fn create_producer() -> Result<FutureProducer, KafkaError> {
 }
 
 pub async fn send_event(
-    encoder: &mut AvroEncoder<'_>,
     producer: &FutureProducer,
     event: DatasetEvent,
 ) -> Result<(), KafkaError> {
     let key = event.fdk_id.clone();
-    let encoded = encoder
+    let encoded = AVRO_ENCODER
         .encode_struct(
             event,
             &SubjectNameStrategy::RecordNameStrategy("no.fdk.dataset.DatasetEvent".to_string()),
