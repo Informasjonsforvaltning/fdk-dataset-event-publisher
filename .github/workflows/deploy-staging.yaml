@@ -1,0 +1,40 @@
+name: Deploy to staging
+
+on:
+  pull_request:
+    types: [ready_for_review, opened, reopened, synchronize]
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Run tests when pull request is created
+    if: github.event.pull_request.draft == false
+    uses: Informasjonsforvaltning/workflows/.github/workflows/test-rust.yaml@main
+    secrets:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    name: Build with reusable workflow when pull request is created
+    if: github.event.pull_request.draft == false
+    uses: Informasjonsforvaltning/workflows/.github/workflows/build-push.yaml@main
+    with:
+      app_name: fdk-dataset-event-publisher
+      environment: staging
+    secrets:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GCP_SA_DIGDIR_FDK_GCR_KEY: ${{ secrets.GCP_SA_DIGDIR_FDK_GCR_KEY }}
+
+  deploy:
+    name: Deploy to staging environment with reusable workflow when test and build is successful
+    if: github.event.pull_request.draft == false
+    needs: [test, build]
+    uses: Informasjonsforvaltning/workflows/.github/workflows/deploy.yaml@main
+    with:
+      app_name: fdk-dataset-event-publisher
+      environment: staging
+      cluster: digdir-fdk-dev
+    secrets:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      DIGDIR_FDK_AUTODEPLOY: ${{ secrets.DIGDIR_FDK_DEV_AUTODEPLOY }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
