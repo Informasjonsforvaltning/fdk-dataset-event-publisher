@@ -118,7 +118,7 @@ async fn handle_message(
 
     for element in report {
         let timestamp =
-            DateTime::parse_from_str(&element.start_time, "%Y-%m-%d %H:%M:%S %z")?.timestamp();
+            DateTime::parse_from_str(&element.start_time, "%Y-%m-%d %H:%M:%S %z")?.timestamp() * 1000;
 
         for resource in element.changed_resources {
             tracing::info!(id = resource.fdk_id.as_str(), "Processing dataset");
